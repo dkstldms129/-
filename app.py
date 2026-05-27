@@ -1,75 +1,83 @@
 import streamlit as st
-import random
+import google.generativeai as genai
+from google.api_core.exceptions import GoogleAPIError
 
-# 페이지 설정
-st.set_page_config(
-    page_title="연애 초보 도우미",
-    page_icon="💕",
-)
+# Page 설정
+st.set_page_config(page_title="마음 토닥 챗봇", page_icon=" Re", layout="centered")
+st.title(" 맘스페이스: 당신의 고민 상담소")
+st.caption("누구에게도 말하지 못했던 고민, 편하게 털어놓으세요. 당신의 이야기를 귀담아듣고 위로해 드릴게요.")
 
-# 제목
-st.title("💕 연애 초보 도우미")
-st.write("연애가 어려운 사람들을 위한 간단한 상담 앱!")
+# 1. Streamlit Secrets에서 API 키 불러오기 및 설정
+if "GEMINI_API_KEY" not in st.secrets:
+    st.error("🔑 API 키가 설정되지 않았습니다. `.streamlit/secrets.toml` 파일을 확인해주세요.")
+    st.stop()
 
-# 사용자 이름 입력
-name = st.text_input("이름을 입력하세요")
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# 상황 선택
-situation = st.selectbox(
-    "현재 상황을 선택하세요",
-    ["썸 타는 중", "고백 고민 중", "연락이 어렵다", "데이트 준비 중"]
-)
+# 2. 채팅 기록(Session State) 초기화
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# 고민 입력
-problem = st.text_area("현재 고민을 적어보세요")
+# 3. Gemini 모델 및 페르소나 설정 (gemini-2.5-flash-lite)
+SYSTEM_INSTRUCTION = """
+당신은 따뜻하고 공감 능력이 뛰어난 전문 심리 상담사입니다. 
+사용자가 고민을 털어놓을 때, 절대 비난하거나 섣부른 판단을 내리지 마세요. 
+사용자의 감정에 깊이 공감해 주고(예: "정말 힘들었겠어요", "그런 마음이 드는 건 당연해요"), 
+해결책을 강요하기보다는 스스로 마음을 정리할 수 있도록 따뜻한 조언과 질문을 건네주세요. 
+말투는 항상 부드럽고 다정한 존댓말을 사용하세요.
+"""
 
-# 호감도 슬라이더
-interest = st.slider("상대방의 호감도를 예상해보세요", 0, 100, 50)
+@st.cache_resource
+def load_model():
+    return genai.GenerativeModel(
+        model_name="gemini-2.5-flash-lite",
+        system_instruction=SYSTEM_INSTRUCTION
+    )
 
-# 연애 팁 리스트
-tips = {
-    "썸 타는 중": [
-        "너무 급하게 다가가지 마세요 😊",
-        "상대의 말에 공감해주는 게 중요해요!",
-        "가벼운 칭찬은 분위기를 좋게 만듭니다."
-    ],
-    "고백 고민 중": [
-        "타이밍이 중요해요 💌",
-        "직접 진심을 말하는 게 좋아요.",
-        "결과보다 용기가 더 멋집니다!"
-    ],
-    "연락이 어렵다": [
-        "짧고 가벼운 대화부터 시작하세요 📱",
-        "상대의 관심사를 물어보세요.",
-        "답장이 늦어도 너무 불안해하지 마세요."
-    ],
-    "데이트 준비 중": [
-        "편안한 분위기의 장소가 좋아요 ☕",
-        "상대 취향을 고려해보세요.",
-        "너무 완벽하려고 하지 않아도 괜찮아요!"
-    ]
-}
+try:
+    model = load_model()
+except Exception as e:
+    st.error(f"모델을 로드하는 중 오류가 발생했습니다: {e}")
+    st.stop()
 
-# 버튼
-if st.button("연애 조언 받기"):
-    st.subheader(f"{name}님을 위한 조언 💡")
+# 4. 기존 채팅 기록 표시
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-    # 랜덤 팁 출력
-    advice = random.choice(tips[situation])
-    st.success(advice)
+# 5. 사용자 입력 받기
+if user_input := st.chat_input("요즘 어떤 고민이 있으신가요?"):
+    # 사용자 메시지 화면에 표시 및 저장
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-    # 호감도 분석
-    if interest >= 80:
-        st.write("🔥 호감도가 꽤 높아 보여요!")
-    elif interest >= 50:
-        st.write("🙂 가능성이 있어요. 천천히 다가가보세요.")
-    else:
-        st.write("😅 조금 더 친해지는 시간이 필요해 보여요.")
-
-    # 고민 출력
-    if problem:
-        st.info(f"입력한 고민: {problem}")
-
-# 푸터
-st.write("---")
-st.caption("Made with ❤️ using Streamlit")
+    # 챗봇 답변 생성
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        message_placeholder.markdown("💡 당신의 이야기를 듣고 있어요...")
+        
+        try:
+            # 대화 맥락을 유지하기 위해 전체 대화 기록을 모델에 전달할 수 있는 형태로 변환
+            # (Gemini API의 ChatSession을 쓰거나 아래처럼 history를 재구성할 수 있습니다)
+            formatted_history = []
+            for msg in st.session_state.messages:
+                role = "user" if msg["role"] == "user" else "model"
+                formatted_history.append({"role": role, "parts": [msg["content"]]})
+            
+            # API 호출
+            response = model.generate_content(formatted_history)
+            ai_response = response.text
+            
+            # 답변 출력 및 저장
+            message_placeholder.markdown(ai_response)
+            st.session_state.messages.append({"role": "assistant", "content": ai_response})
+            
+        except GoogleAPIError as e:
+            # 구글 API 관련 에러 처리
+            message_placeholder.markdown("⚠️ 구글 서비스와 연결이 원활하지 않습니다. 잠시 후 다시 시도해주세요.")
+            st.sidebar.error(f"API 에러 발생: {e}")
+        except Exception as e:
+            # 기타 예상치 못한 에러 처리
+            message_placeholder.markdown("⚠️ 답변을 생성하는 중에 문제가 발생했습니다.")
+            st.sidebar.error(f"일반 에러 발생: {e}")
